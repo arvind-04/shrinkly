@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: shrinkly-postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-shrinkly}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-shrinkly123}
+      POSTGRES_DB: ${DB_NAME:-shrinkly}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-shrinkly}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - shrinkly-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: shrinkly-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - shrinkly-network
+
+  server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    container_name: shrinkly-server
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: postgresql://${DB_USER:-shrinkly}:${DB_PASSWORD:-shrinkly123}@postgres:5432/${DB_NAME:-shrinkly}
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost}
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - shrinkly-network
+    restart: unless-stopped
+
+  client:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.client
+    container_name: shrinkly-client
+    ports:
+      - "80:80"
+    depends_on:
+      - server
+    networks:
+      - shrinkly-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  shrinkly-network:
+    driver: bridge
